@@ -9,11 +9,8 @@
 
 #include "util.hpp"
 
-#include <cilk/cilk.h>
-#include <cilk/reducer_list.h>
-
 namespace constants {
-const uint64_t MAX_DEPTH = 15;
+const uint64_t MAX_DEPTH = 0;
 const int MAX_ITER = 20;
 const uint64_t PARALLEL_SWITCH_DEPTH = 6;
 }
@@ -208,7 +205,7 @@ partition_t initial_partition(docid_node* G, size_t n)
 {
     partition_t p;
     std::mt19937 rnd(n);
-    std::shuffle(G, G + n, rnd);
+    // std::shuffle(G, G + n, rnd);
     p.V1 = G;
     p.n1 = (n / 2);
     p.V2 = G + p.n1;
@@ -229,7 +226,7 @@ struct move_gain {
         , node(n)
     {
     }
-    bool operator<(const move_gain& other) { return gain > other.gain; }
+    bool operator<(const move_gain& other) const { return gain > other.gain; }
 };
 
 struct move_gains_t {
@@ -264,70 +261,15 @@ void compute_deg(docid_node* docs, size_t n, std::vector<uint32_t>& deg)
 void compute_gains(docid_node* docs, size_t n, std::vector<float>& before,
     std::vector<float>& after, std::vector<move_gain>& res)
 {
-    cilk::reducer<cilk::op_list_append<move_gain> > gr;
-    res.resize(n);
-    cilk_for(size_t i = 0; i < n; i++)
-    {
-        auto doc = docs + i;
-        res[i] = compute_single_gain(doc, before, after);
-    }
-}
-
-void compute_gains_np(docid_node* docs, size_t n, std::vector<float>& before,
-    std::vector<float>& after, std::vector<move_gain>& res)
-{
-    cilk::reducer<cilk::op_list_append<move_gain> > gr;
     res.resize(n);
     for (size_t i = 0; i < n; i++) {
         auto doc = docs + i;
         res[i] = compute_single_gain(doc, before, after);
+        // std::cout << res[i].gain << " ";
     }
 }
 
 move_gains_t compute_move_gains(partition_t& P, size_t num_queries,
-    std::vector<uint32_t>& deg1, std::vector<uint32_t>& deg2,
-    std::vector<float>& before, std::vector<float>& left2right,
-    std::vector<float>& right2left, std::vector<uint8_t>& qry_changed)
-{
-    move_gains_t gains;
-
-    float logn1 = log2f(P.n1);
-    float logn2 = log2f(P.n2);
-    cilk_for(size_t q = 0; q < num_queries; q++)
-    {
-        if (qry_changed[q] == 1) {
-            qry_changed[q] = 0;
-            before[q] = 0;
-            left2right[q] = 0;
-            right2left[q] = 0;
-            if (deg1[q] or deg2[q]) {
-                before[q] = deg1[q] * logn1
-                    - deg1[q] * log2_precomp[deg1[q] + 1] + deg2[q] * logn2
-                    - deg2[q] * log2_precomp[deg2[q] + 1];
-            }
-            if (deg1[q]) {
-                left2right[q] = (deg1[q] - 1) * logn1
-                    - (deg1[q] - 1) * log2_precomp[deg1[q]]
-                    + (deg2[q] + 1) * logn2
-                    - (deg2[q] + 1) * log2_precomp[deg2[q] + 2];
-            }
-            if (deg2[q])
-                right2left[q] = (deg1[q] + 1) * logn1
-                    - (deg1[q] + 1) * log2_precomp[deg1[q] + 2]
-                    + (deg2[q] - 1) * logn2
-                    - (deg2[q] - 1) * log2_precomp[deg2[q]];
-        }
-    }
-
-    // (2) compute gains from moving docs
-    cilk_spawn compute_gains(P.V1, P.n1, before, left2right, gains.V1);
-    cilk_spawn compute_gains(P.V2, P.n2, before, right2left, gains.V2);
-    cilk_sync;
-
-    return gains;
-}
-
-move_gains_t compute_move_gains_np(partition_t& P, size_t num_queries,
     std::vector<uint32_t>& deg1, std::vector<uint32_t>& deg2,
     std::vector<float>& before, std::vector<float>& left2right,
     std::vector<float>& right2left, std::vector<uint8_t>& qry_changed)
@@ -368,7 +310,7 @@ move_gains_t compute_move_gains_np(partition_t& P, size_t num_queries,
     return gains;
 }
 
-void recursive_bisection_np(progress_bar& progress, docid_node* G,
+void recursive_bisection(progress_bar& progress, docid_node* G,
     size_t num_queries, size_t n, uint64_t depth = 0)
 {
     // (1) create the initial partition. O(n)
@@ -387,11 +329,14 @@ void recursive_bisection_np(progress_bar& progress, docid_node* G,
             compute_deg(partition.V1, partition.n1, deg1);
             compute_deg(partition.V2, partition.n2, deg2);
         }
+        // for(auto&& d : deg1) {
+        //     std::cout << d << std::endl;
+        // }
 
         // (3) perform bisection. constant number of iterations
         for (int cur_iter = 1; cur_iter <= constants::MAX_ITER; cur_iter++) {
             // (3a) compute move gains
-            auto gains = compute_move_gains_np(partition, num_queries, deg1,
+            auto gains = compute_move_gains(partition, num_queries, deg1,
                 deg2, before, left2right, right2left, query_changed);
             memset(query_changed.data(), 0, num_queries);
 
@@ -407,6 +352,7 @@ void recursive_bisection_np(progress_bar& progress, docid_node* G,
                 auto itr_v1 = gains.V1.begin();
                 auto itr_v2 = gains.V2.begin();
                 while (itr_v1 != gains.V1.end() && itr_v2 != gains.V2.end()) {
+                    std::cout << itr_v1->gain << " " << itr_v2->gain << " " << itr_v1->node->initial_id << " " << itr_v2->node->initial_id << " " << (itr_v1->gain + itr_v2->gain > 0) << std::endl;
                     if (itr_v1->gain + itr_v2->gain > 0) {
                         // maybe we need to do something here to make
                         // compute_move_gains() efficient?
@@ -431,105 +377,12 @@ void recursive_bisection_np(progress_bar& progress, docid_node* G,
     // (4) recurse. at most O(log n) recursion steps
     if (depth + 1 <= constants::MAX_DEPTH) {
         if (partition.n1 > 1)
-            recursive_bisection_np(
+            recursive_bisection(
                 progress, partition.V1, num_queries, partition.n1, depth + 1);
         if (partition.n2 > 1)
-            recursive_bisection_np(
+            recursive_bisection(
                 progress, partition.V2, num_queries, partition.n2, depth + 1);
 
-        if (partition.n1 == 1)
-            progress.done(1);
-        if (partition.n2 == 1)
-            progress.done(1);
-    } else {
-        progress.done(n);
-    }
-}
-
-void recursive_bisection(progress_bar& progress, docid_node* G,
-    size_t num_queries, size_t n, uint64_t depth = 0)
-{
-    // (1) create the initial partition. O(n)
-    auto partition = initial_partition(G, n);
-
-    {
-        // (2) we compute deg1 and deg2 only once
-        std::vector<uint32_t> deg1(num_queries, 0);
-        std::vector<uint32_t> deg2(num_queries, 0);
-        std::vector<float> before(num_queries);
-        std::vector<float> left2right(num_queries);
-        std::vector<float> right2left(num_queries);
-
-        std::vector<uint8_t> query_changed(num_queries, 1);
-        {
-            cilk_spawn compute_deg(partition.V1, partition.n1, deg1);
-            cilk_spawn compute_deg(partition.V2, partition.n2, deg2);
-            cilk_sync;
-        }
-
-        // (3) perform bisection. constant number of iterations
-        for (int cur_iter = 1; cur_iter <= constants::MAX_ITER; cur_iter++) {
-            // (3a) compute move gains
-            auto gains = compute_move_gains(partition, num_queries, deg1, deg2,
-                before, left2right, right2left, query_changed);
-            memset(query_changed.data(), 0, num_queries);
-
-            // (3b) sort by decreasing gain. O(n log n)
-            {
-                cilk_spawn std::sort(gains.V1.begin(), gains.V1.end());
-                cilk_spawn std::sort(gains.V2.begin(), gains.V2.end());
-                cilk_sync;
-            }
-
-            // (3c) swap. O(n)
-            size_t num_swaps = 0;
-            {
-                auto itr_v1 = gains.V1.begin();
-                auto itr_v2 = gains.V2.begin();
-                while (itr_v1 != gains.V1.end() && itr_v2 != gains.V2.end()) {
-                    if (itr_v1->gain + itr_v2->gain > 0) {
-                        // maybe we need to do something here to make
-                        // compute_move_gains() efficient?
-                        swap_nodes(itr_v1->node, itr_v2->node, deg1, deg2,
-                            query_changed);
-                        num_swaps++;
-                    } else {
-                        break;
-                    }
-                    ++itr_v1;
-                    ++itr_v2;
-                }
-            }
-
-            // (3d) converged?
-            if (num_swaps == 0) {
-                break;
-            }
-        }
-    }
-
-    // (4) recurse. at most O(log n) recursion steps
-    if (depth + 1 <= constants::MAX_DEPTH) {
-        if (depth < constants::PARALLEL_SWITCH_DEPTH) {
-            if (partition.n1 > 1) {
-                cilk_spawn recursive_bisection(progress, partition.V1,
-                    num_queries, partition.n1, depth + 1);
-            }
-            if (partition.n2 > 1) {
-                cilk_spawn recursive_bisection(progress, partition.V2,
-                    num_queries, partition.n2, depth + 1);
-            }
-            cilk_sync;
-        } else {
-            if (partition.n1 > 1) {
-                recursive_bisection_np(progress, partition.V1, num_queries,
-                    partition.n1, depth + 1);
-            }
-            if (partition.n2 > 1) {
-                recursive_bisection_np(progress, partition.V2, num_queries,
-                    partition.n2, depth + 1);
-            }
-        }
         if (partition.n1 == 1)
             progress.done(1);
         if (partition.n2 == 1)
@@ -549,12 +402,13 @@ inverted_index reorder_docids_graph_bisection(
 
     // make things faster by precomputing some logs
     log2_precomp.resize(bg.num_docs);
-    cilk_for(size_t i = 0; i < bg.num_docs; i++) { log2_precomp[i] = log2f(i); }
+    for(size_t i = 0; i < bg.num_docs; i++) { log2_precomp[i] = log2f(i); }
 
     {
         timer t("recursive_bisection");
         progress_bar bp("recursive_bisection", bg.num_docs);
         recursive_bisection(bp, bg.graph.data(), bg.num_queries, bg.num_docs);
     }
+
     return recreate_invidx(bg);
 }

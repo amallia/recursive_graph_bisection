@@ -242,6 +242,7 @@ inverted_index read_ds2i_files(std::string ds2i_prefix)
         while (!feof(df)) {
             const auto& list = read_uint32_list(df);
             size_t n = list.size();
+            // std::cout << list.size() << std::endl;
             if (n == 0) {
                 break;
             }
