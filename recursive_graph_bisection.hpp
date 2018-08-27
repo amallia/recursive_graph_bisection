@@ -10,7 +10,7 @@
 #include "util.hpp"
 
 namespace constants {
-const uint64_t MAX_DEPTH = 0;
+const uint64_t MAX_DEPTH = 20;
 const int MAX_ITER = 20;
 const uint64_t PARALLEL_SWITCH_DEPTH = 6;
 }
@@ -310,7 +310,7 @@ move_gains_t compute_move_gains(partition_t& P, size_t num_queries,
     return gains;
 }
 
-void recursive_bisection(progress_bar& progress, docid_node* G,
+void recursive_bisection(/*progress_bar& progress,*/ docid_node* G,
     size_t num_queries, size_t n, uint64_t depth = 0)
 {
     // (1) create the initial partition. O(n)
@@ -352,7 +352,7 @@ void recursive_bisection(progress_bar& progress, docid_node* G,
                 auto itr_v1 = gains.V1.begin();
                 auto itr_v2 = gains.V2.begin();
                 while (itr_v1 != gains.V1.end() && itr_v2 != gains.V2.end()) {
-                    std::cout << itr_v1->gain << " " << itr_v2->gain << " " << itr_v1->node->initial_id << " " << itr_v2->node->initial_id << " " << (itr_v1->gain + itr_v2->gain > 0) << std::endl;
+                    // std::cout << itr_v1->gain << " " << itr_v2->gain << " " << itr_v1->node->initial_id << " " << itr_v2->node->initial_id << " " << (itr_v1->gain + itr_v2->gain > 0) << std::endl;
                     if (itr_v1->gain + itr_v2->gain > 0) {
                         // maybe we need to do something here to make
                         // compute_move_gains() efficient?
@@ -366,7 +366,7 @@ void recursive_bisection(progress_bar& progress, docid_node* G,
                     ++itr_v2;
                 }
             }
-
+            std::cout << depth << " " << cur_iter << " " << num_swaps << std::endl;
             // (3d) converged?
             if (num_swaps == 0) {
                 break;
@@ -378,17 +378,17 @@ void recursive_bisection(progress_bar& progress, docid_node* G,
     if (depth + 1 <= constants::MAX_DEPTH) {
         if (partition.n1 > 1)
             recursive_bisection(
-                progress, partition.V1, num_queries, partition.n1, depth + 1);
+               /* progress,*/ partition.V1, num_queries, partition.n1, depth + 1);
         if (partition.n2 > 1)
             recursive_bisection(
-                progress, partition.V2, num_queries, partition.n2, depth + 1);
+                /* progress,*/ partition.V2, num_queries, partition.n2, depth + 1);
 
-        if (partition.n1 == 1)
-            progress.done(1);
-        if (partition.n2 == 1)
-            progress.done(1);
+        // if (partition.n1 == 1)
+        //     progress.done(1);
+        // if (partition.n2 == 1)
+        //     progress.done(1);
     } else {
-        progress.done(n);
+        // progress.done(n);
     }
 }
 
@@ -406,8 +406,8 @@ inverted_index reorder_docids_graph_bisection(
 
     {
         timer t("recursive_bisection");
-        progress_bar bp("recursive_bisection", bg.num_docs);
-        recursive_bisection(bp, bg.graph.data(), bg.num_queries, bg.num_docs);
+        // progress_bar bp("recursive_bisection", bg.num_docs);
+        recursive_bisection(/*bp, */ bg.graph.data(), bg.num_queries, bg.num_docs);
     }
 
     return recreate_invidx(bg);
