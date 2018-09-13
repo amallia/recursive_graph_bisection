@@ -26,6 +26,11 @@ else ()
     message(FATAL_ERROR "Please, use GCC or Clang compiler!")
 endif()
 
+find_package(OpenMP)
+if(OPENMP_FOUND)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
+
 include_directories(include)
 add_library(rgb INTERFACE)
 target_include_directories(rgb INTERFACE
